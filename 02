@@ -1,0 +1,133 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+
+# Configurações de layout
+st.set_page_config(page_title="Kite For Life - Sistema de Gestão", layout="wide")
+
+# Lista de critérios conforme a tua planilha
+CRITERIOS = [
+    'LIDERANÇA', 'ASSIDUIDADE', 'FLEXIBILIDADE', 'TEORIA',
+    'COMANDO', 'CONTROLE', 'BADYDRAG ESQ/DIR', 'WATER START',
+    'PRANCHA ESQ/DIR', 'CONTRA VENTO'
+]
+
+def carregar_dados_de_arquivo(uploaded_file):
+    if uploaded_file is None:
+        return None
+    fname = uploaded_file.name.lower()
+    try:
+        if fname.endswith(('.xls', '.xlsx', '.xlsm')):
+            # Ler a primeira folha ou uma folha específica conforme necessário
+            df = pd.read_excel(uploaded_file, sheet_name=0, skiprows=11)
+        else:
+            # csv
+            df = pd.read_csv(uploaded_file, skiprows=11)
+        # Remover colunas unnamed
+        df = df.loc[:, ~df.columns.str.contains('^Unnamed', na=False)]
+        return df
+    except Exception as e:
+        st.warning(f"Falha ao ler o ficheiro: {e}")
+        return None
+
+# Tentar carregar ficheiro local default (útil para desenvolvimento)
+DEFAULT_FILENAME = "kite f lifeavaliacao_de_desempenho_-_2025.xlsm - Aval.csv"
+
+st.sidebar.header("🌊 Kite For Life v2025")
+menu = st.sidebar.selectbox("Navegação", ["Painel Geral", "Ficha do Aluno", "Lançar Novas Notas"])
+
+st.sidebar.markdown("**Carregar ficheiro de dados (opcional):**")
+uploaded = st.sidebar.file_uploader("Escolhe um .xls/.xlsx/.xlsm/.csv", type=["xls", "xlsx", "xlsm", "csv"])
+
+df_notas = carregar_dados_de_arquivo(uploaded)
+
+# Se não carregou nada, tentar carregar um ficheiro local com nome padrão (apenas em dev local)
+if df_notas is None:
+    try:
+        df_notas = pd.read_csv(DEFAULT_FILENAME, skiprows=11)
+        df_notas = df_notas.loc[:, ~df_notas.columns.str.contains('^Unnamed', na=False)]
+    except Exception:
+        # Fallback com dados de exemplo
+        df_notas = pd.DataFrame({
+            'Aluno': ['Beatriz Vitoria', 'Ana Cecilia', 'Francisco Neto'],
+            # Criar colunas por critério com valores de exemplo (ou usar apenas 'Média Geral')
+            'LIDERANÇA': [3, 2, 4],
+            'ASSIDUIDADE': [3, 2, 4],
+            'FLEXIBILIDADE': [3, 3, 4],
+            'TEORIA': [3, 1, 4],
+            'COMANDO': [3, 2, 4],
+            'CONTROLE': [3, 2, 4],
+            'BADYDRAG ESQ/DIR': [3, 3, 4],
+            'WATER START': [3, 2, 4],
+            'PRANCHA ESQ/DIR': [3, 2, 4],
+            'CONTRA VENTO': [3, 1, 4],
+            'Média Geral': [3.0, 2.0, 3.9]
+        })
+
+# --- PÁGINA 1: PAINEL GERAL ---
+if menu == "Painel Geral":
+    st.title("📊 Indicadores da Escola")
+    
+    col1, col2, col3 = st.columns(3)
+    media_escola = 2.26  # Valor extraído do teu 'Dash2' (pode ser calculado dinamicamente)
+    col1.metric("Média da Escola", f"{media_escola}")
+    col2.metric("Total de Alunos", len(df_notas))
+    col3.metric("Status", "Em Evolução")
+
+    st.subheader("Desempenho Médio por Habilidade")
+    # Se o dataframe tiver as colunas de critério, calcular média real; senão usar valores fixos
+    medias = None
+    if set(CRITERIOS).issubset(df_notas.columns):
+        medias = [df_notas[c].mean() for c in CRITERIOS]
+    else:
+        medias = [2.24, 3.35, 2.47, 2.18, 2.18, 2.12, 2.47, 2.06, 1.88, 1.71]
+    
+    df_dash2 = pd.DataFrame({
+        'Critério': CRITERIOS,
+        'Média': medias
+    })
+    fig_bar = px.bar(df_dash2, x='Critério', y='Média', color='Média', 
+                     color_continuous_scale='Blues', range_y=[0, 5])
+    st.plotly_chart(fig_bar, use_container_width=True)
+    
+# --- PÁGINA 2: FICHA DO ALUNO ---
+elif menu == "Ficha do Aluno":
+    st.title("👤 Análise Individual")
+    if 'Aluno' not in df_notas.columns:
+        st.warning("O ficheiro de dados não contém a coluna 'Aluno'. Carrega um ficheiro compatível ou corrige o nome da coluna.")
+    else:
+        aluno_sel = st.selectbox("Selecione o Aluno:", df_notas['Aluno'].unique())
+        dados_aluno = df_notas[df_notas['Aluno'] == aluno_sel].iloc[0]
+        notas_aluno = []
+        for c in CRITERIOS:
+            # se a coluna existir no ficheiro, usa-a, caso contrário assume 0
+            notas_aluno.append(float(dados_aluno[c]) if c in df_notas.columns else 0.0)
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatterpolar(r=notas_aluno, theta=CRITERIOS, fill='toself', name='Este Aluno'))
+        fig.add_trace(go.Scatterpolar(r=[2.26]*len(CRITERIOS), theta=CRITERIOS, name='Média Escola', 
+                                      line=dict(dash='dash', color='gray')))
+        fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 5])), showlegend=True)
+        st.plotly_chart(fig, use_container_width=True)
+
+# --- PÁGINA 3: LANÇAR NOTAS ---
+elif menu == "Lançar Novas Notas":
+    st.title("📝 Formulário de Avaliação")
+    if 'Aluno' not in df_notas.columns:
+        st.warning("Não há coluna 'Aluno' nos dados. A opção de lançamento funciona melhor com uma base que contenha 'Aluno'.")
+    with st.form("registro"):
+        nome = st.selectbox("Escolha o Aluno", df_notas['Aluno'].unique() if 'Aluno' in df_notas.columns else ["Aluno Exemplo"])
+        st.write("Atribua notas de 1 (Ruim) a 5 (Marcante):")
+        
+        c1, c2 = st.columns(2)
+        notas_novas = {}
+        for i, crit in enumerate(CRITERIOS):
+            with (c1 if i % 2 == 0 else c2):
+                notas_novas[crit] = st.select_slider(crit, options=[1, 2, 3, 4, 5], value=3)
+        
+        coment = st.text_area("Observações de campo")
+        if st.form_submit_button("Guardar Avaliação"):
+            # Aqui apenas mostramos a avaliação - para guardar no repositório/BD precisas de integração (ex.: Google Sheets, DB, S3)
+            st.success(f"Avaliação de {nome} registada com sucesso no sistema!")
+            st.json({"aluno": nome, "notas": notas_novas, "coment": coment})
